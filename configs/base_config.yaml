@@ -1,0 +1,24 @@
+# Diffusion Schedule Settings
+T_STEPS: 1000
+BETA_START: 0.0001
+BETA_END: 0.02
+VOCAB_SIZE: 6                # A=0, C=1, G=2, T=3, N=4, [MASK]=5
+SEQ_LEN: 1024
+MIN_CORRUPTION_RATE: 0.15    # Floor for token masking during diffusion
+
+# Model Architecture
+HIDDEN_DIM: 256
+
+# Training Hyperparameters
+BATCH_SIZE: 64
+EPOCHS: 10
+LEARNING_RATE: 0.002         # Base learning rate (equivalent to 2e-3)
+GRAD_CLIP: 1.0
+WARMUP_EPOCHS: 5             # Linear warmup duration
+T_0: 25                      # CosineAnnealingWarmRestarts restart cycle
+ETA_MIN: 0.000001            # Floor for Cosine learning rate
+
+# Paths & Directories
+DATA_DIR: "data/processed"
+CHECKPOINT_DIR: "outputs/checkpoints"
+SEED: 42

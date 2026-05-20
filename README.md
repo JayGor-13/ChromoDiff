@@ -32,43 +32,40 @@ cd chromodiff
 pip install -e .
 ```
 
----
-
 ## Quick Start
 
-### Train
+### 1. Run Preprocessing
+To extract sequences from the human genome (`hg38.fa`) and ClinVar mutations (`clinvar.vcf`):
 ```bash
-python scripts/train.py --config configs/default.yaml
+python run_pipeline.py --mode preprocess
+```
+*(For testing, pass `--dummy` to instantly generate high-quality synthetic data).*
+
+### 2. Train Model
+```bash
+python run_pipeline.py --mode train
 ```
 
-### Evaluate (AUROC / AUPRC)
+### 3. Evaluate Zero-Shot GVES Pathogenicity (AUROC/AUPRC)
 ```bash
-python scripts/evaluate.py \
-    --config  configs/default.yaml \
-    --weights outputs/checkpoints/default/best.pth \
-    --data    data/X_corrupted.npy \
-    --labels  data/Y_labels.npy
+python run_pipeline.py --mode evaluate --weights outputs/checkpoints/genodiff_best.pth
 ```
 
-### Score a single variant (Python API)
+### 4. Score a Single Variant (Python API)
 ```python
 import torch
-from chromodiff.model.genodiff import GenoDiff1D
-from chromodiff.diffusion.schedule import make_beta_schedule
-from chromodiff.scoring.gves import calculate_gves
+from src.models.unet import GenoDiff1D
+from src.evaluate import calculate_gves
 
-device = torch.device("cuda")
-model  = GenoDiff1D().to(device)
-model.load_state_dict(torch.load("outputs/checkpoints/default/best.pth"))
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model = GenoDiff1D(vocab_size=6, hidden_dim=256).to(device)
+model.load_state_dict(torch.load("outputs/checkpoints/genodiff_best.pth", map_location=device))
 
-_, _, alphas_cumprod = make_beta_schedule(1000, 1e-4, 0.02, device)
+# Sequence token array [1, 1024] (A=0, C=1, G=2, T=3, N=4, [MASK]=5)
+seq = torch.randint(0, 5, (1, 1024), dtype=torch.long).to(device)
 
-# Your 1024-bp genomic window as a Long tensor
-seq = torch.tensor([your_sequence], dtype=torch.long).unsqueeze(0)
-
-score = calculate_gves(model, seq, alphas_cumprod,
-                       mutation_pos=512, ref_base="A", alt_base="T")
-print(f"GVES: {score:.4f}")  # positive = pathogenic
+score = calculate_gves(model, seq, ref_base="A", alt_base="T", mutation_pos=512)
+print(f"GVES: {score[0]:.4f}") # Positive = pathogenic, Near-zero = benign
 ```
 
 ---
@@ -77,38 +74,37 @@ print(f"GVES: {score:.4f}")  # positive = pathogenic
 
 ```
 ChromoDiff/
-├── configs/           # All hyperparameters (YAML) — one file per experiment
-├── chromodiff/        # Installable Python package
-│   ├── data/          # Dataset & DataLoader
-│   ├── diffusion/     # Beta schedule + q_sample
-│   ├── model/         # Embeddings, ResBlocks, GenoDiff1D
-│   ├── scoring/       # GVES, sequence_anomaly_energy, score_dataset
-│   └── interpretability/  # Input gradient saliency maps
-├── scripts/           # CLI entry points (train, evaluate, ablations)
-├── notebooks/         # Exploratory Jupyter notebooks
-└── tests/             # Pytest unit tests
+├── configs/                  # Experiment configuration files
+│   └── base_config.yaml      # Hyperparameters (learning rate, hidden_dim, batch_size)
+│
+├── src/                      # Main source code directory
+│   ├── __init__.py
+│   ├── dataset.py            # PyTorch Dataset and RC Augmentation
+│   ├── diffusion.py          # AbsorbingStateScheduler (Noise logic)
+│   ├── preprocess.py         # ClinVar & Fasta data preprocessor
+│   ├── train.py              # Denoising diffusion training loop
+│   ├── evaluate.py           # Zero-shot GVES scoring and metrics evaluation
+│   ├── utils.py              # Logging, seeds, directory builders, and config helpers
+│   └── models/               # Model architecture modules
+│       ├── __init__.py
+│       ├── embedding.py      # Sinusoidal time embedding module
+│       └── unet.py           # Dilated blocks and GenoDiff1D model
+│
+├── tests/                    # Pytest unit tests
+│   └── test_pipeline.py      # Pytest covering all network components and scheduler
+│
+├── chromodiff_kaggle.ipynb   # Self-contained Kaggle-ready notebook (writes code + trains on P100 GPU)
+├── run_pipeline.py           # Single main CLI entry point
+└── requirements.txt          # Python package requirements
 ```
-
----
-
-## Architecture
-
-| Component | Detail |
-|-----------|--------|
-| Backbone | 1D Dilated Residual CNN |
-| Hidden dim | 256 |
-| Blocks | 8 × DilatedResidualBlock |
-| Dilations | 1, 2, 4, 8, 16, 32, 64, 128 |
-| Receptive field | ~1017 bp (covers full window) |
-| Parameters | ~4.8M |
-| Normalisation | GroupNorm (16 groups) |
-| Time conditioning | Sinusoidal embeddings → 4x MLP |
 
 ---
 
 ## Running Tests
 
+To run the automated validation test suite:
 ```bash
+$env:PYTHONPATH="."
 pytest tests/ -v
 ```
 
