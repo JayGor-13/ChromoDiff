@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 
 from .utils import set_seed, load_config, setup_logger, setup_dirs
-from .dataset import get_dataloader
+from .dataset import get_dataloader, reverse_complement_tensor
 from .diffusion import AbsorbingStateScheduler
 from .models.unet import GenoDiff1D
 
@@ -75,15 +75,17 @@ def train_model(config_path: str):
     best_loss = float("inf")
     train_history = []
     
-    warmup_epochs = config.get("WARMUP_EPOCHS", 5)
+    warmup_epochs = config.get("WARMUP_EPOCHS", 2)
     warmup_steps = warmup_epochs * len(train_loader)
     global_step = 0
-    epochs = config.get("EPOCHS", 10)
+    epochs = config.get("EPOCHS", 50)
     
     logger.info("Starting Unsupervised Diffusion Training...")
     logger.info(f"  Model params : {sum(p.numel() for p in model.parameters() if p.requires_grad)/1e6:.2f}M")
     logger.info(f"  LR warmup    : {warmup_epochs} epochs ({warmup_steps} steps)")
     logger.info(f"  LR restarts  : every {config.get('T_0', 25)} epochs")
+    logger.info(f"  RC augment   : 50% per batch")
+    logger.info(f"  Timestep samp: importance-weighted (squared)")
     
     for epoch in range(epochs):
         model.train()
@@ -99,8 +101,12 @@ def train_model(config_path: str):
                     
             x_start = x_start.to(device, non_blocking=True)
             
-            # Sample random diffusion timesteps
-            t = torch.randint(0, num_steps, (x_start.shape[0],), device=device).long()
+            # Reverse complement augmentation (50% chance per batch)
+            if torch.rand(1).item() < 0.5:
+                x_start = reverse_complement_tensor(x_start)
+            
+            # Sample importance-weighted diffusion timesteps (biased toward low/mid t)
+            t = scheduler_diffusion.sample_timesteps(x_start.shape[0], device)
             
             # Apply forward diffusion (adds [MASK] tokens)
             x_noisy, mutate_mask = scheduler_diffusion.q_sample(x_start, t)

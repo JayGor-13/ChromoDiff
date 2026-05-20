@@ -11,10 +11,10 @@ HIDDEN_DIM: 256
 
 # Training Hyperparameters
 BATCH_SIZE: 64
-EPOCHS: 10
-LEARNING_RATE: 0.002         # Base learning rate (equivalent to 2e-3)
+EPOCHS: 50
+LEARNING_RATE: 0.001         # Base learning rate
 GRAD_CLIP: 1.0
-WARMUP_EPOCHS: 5             # Linear warmup duration
+WARMUP_EPOCHS: 2             # Linear warmup duration (was 5 — too long)
 T_0: 25                      # CosineAnnealingWarmRestarts restart cycle
 ETA_MIN: 0.000001            # Floor for Cosine learning rate
 

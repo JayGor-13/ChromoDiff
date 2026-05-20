@@ -34,9 +34,6 @@ def reverse_complement_tensor(x: torch.Tensor) -> torch.Tensor:
     reversed_x = torch.flip(x, dims=[-1])
     return comp_map[reversed_x]
 
-import os
-from torch.utils.data.distributed import DistributedSampler
-
 def get_dataloader(data_path: str, batch_size: int, shuffle: bool = True, num_workers: int = 0) -> DataLoader:
     """
     Load sequence token array from disk, wrap it in a GenomicDataset, and return a DataLoader.
@@ -45,19 +42,11 @@ def get_dataloader(data_path: str, batch_size: int, shuffle: bool = True, num_wo
     data_tensor = torch.tensor(data_np, dtype=torch.long)
     dataset = GenomicDataset(data_tensor)
     
-    is_distributed = "WORLD_SIZE" in os.environ and int(os.environ["WORLD_SIZE"]) > 1
-    if is_distributed:
-        sampler = DistributedSampler(dataset, shuffle=shuffle)
-        shuffle = False
-    else:
-        sampler = None
-    
     loader = DataLoader(
         dataset,
         batch_size=batch_size,
         shuffle=shuffle,
-        sampler=sampler,
-        drop_last=True if sampler is None and shuffle else False,
+        drop_last=True,
         pin_memory=torch.cuda.is_available(),
         num_workers=num_workers
     )

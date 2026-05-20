@@ -22,6 +22,17 @@ class AbsorbingStateScheduler:
         self.alphas_cumprod = self.alphas_cumprod.to(device)
         return self
 
+    def sample_timesteps(self, batch_size: int, device: torch.device) -> torch.Tensor:
+        """
+        Importance-weighted timestep sampling.
+        Uses a squared distribution to bias toward low/mid corruption levels
+        where the model can actually learn sequence context from surrounding bases.
+        High t (>800) masks >90% of tokens, leaving no context to learn from.
+        """
+        u = torch.rand(batch_size, device=device)
+        t = (u ** 2 * self.num_steps).long().clamp(0, self.num_steps - 1)
+        return t
+
     def q_sample(self, x_start: torch.Tensor, t: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Sample noisy sequence x_t from clean x_0.

@@ -36,8 +36,11 @@ def calculate_gves(model, seq_corrupted, ref_base, alt_base, mutation_pos=512, e
         with torch.amp.autocast("cuda", enabled=torch.cuda.is_available()):
             logits = model(seq_masked, t_tensor) # [B, 6, L]
         
+        # Cast to float32 to avoid float16 underflow/overflow in log/softmax
+        logits_f32 = logits.float()
+        
         # Softmax over logits at mutation_pos
-        probs = torch.softmax(logits[:, :, mutation_pos], dim=1) # [B, 6]
+        probs = torch.softmax(logits_f32[:, :, mutation_pos], dim=1) # [B, 6]
         
         # Extract ref and alt probabilities
         p_ref = probs[:, ref_idx]
@@ -74,7 +77,9 @@ def score_dataset_gves(model, X_healthy, X_corrupted, mutation_pos=512, batch_si
             with torch.amp.autocast("cuda", enabled=torch.cuda.is_available()):
                 logits = model(batch_masked, t_tensor) # [B, 6, L]
             
-            probs = torch.softmax(logits[:, :, mutation_pos], dim=1) # [B, 6]
+            # Cast to float32 to avoid float16 underflow/overflow in log/softmax
+            logits_f32 = logits.float()
+            probs = torch.softmax(logits_f32[:, :, mutation_pos], dim=1) # [B, 6]
             
             # Extract ref and alt indices
             ref_idx = batch_h[:, mutation_pos] # [B]
@@ -141,6 +146,10 @@ def score_dataset_percentile_nll(model, sequences, batch_size=64, timesteps=None
     return np.concatenate(all_pct), np.concatenate(all_z)
 
 def evaluate_predictions(y_true, scores, best_name="GVES", checkpoint_dir="outputs/checkpoints"):
+    # Clean scores of NaN and Inf, and cast to float32
+    scores = np.asarray(scores, dtype=np.float32)
+    scores = np.nan_to_num(scores, nan=0.0, posinf=1e9, neginf=-1e9)
+    
     auroc = roc_auc_score(y_true, scores)
     auprc = average_precision_score(y_true, scores)
     

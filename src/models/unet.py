@@ -5,19 +5,20 @@ from .embedding import SinusoidalPositionEmbeddings
 class DilatedResidualBlock(nn.Module):
     """
     1D dilated residual block with time conditioning.
-    Receptive field = 2 * dilation + 1. Replicates spatial dimension of 1024.
+    Uses GroupNorm (not BatchNorm) for stable training across varying
+    diffusion corruption levels — BatchNorm statistics shift with t.
     """
     def __init__(self, hidden_dim: int, dilation: int):
         super().__init__()
         # Padding = dilation maintains input sequence length (1024) for kernel_size=3
         self.conv1 = nn.Conv1d(hidden_dim, hidden_dim, kernel_size=3, padding=dilation, dilation=dilation)
-        self.norm1 = nn.BatchNorm1d(hidden_dim)
+        self.norm1 = nn.GroupNorm(8, hidden_dim)
         self.act1 = nn.GELU()
         
         self.time_proj = nn.Linear(hidden_dim, hidden_dim)
         
         self.conv2 = nn.Conv1d(hidden_dim, hidden_dim, kernel_size=3, padding=dilation, dilation=dilation)
-        self.norm2 = nn.BatchNorm1d(hidden_dim)
+        self.norm2 = nn.GroupNorm(8, hidden_dim)
         
     def forward(self, x: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
         # 1. Dilated Conv 1
@@ -54,7 +55,7 @@ class GenoDiff1D(nn.Module):
             DilatedResidualBlock(hidden_dim, dilation=d) for d in dilations
         ])
 
-        self.output_norm = nn.BatchNorm1d(hidden_dim)
+        self.output_norm = nn.GroupNorm(8, hidden_dim)
         self.final_conv = nn.Conv1d(hidden_dim, vocab_size, kernel_size=1)
 
     def forward(self, noisy_dna: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
