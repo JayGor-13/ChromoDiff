@@ -40,7 +40,7 @@ def test_genodiff_model():
     
     logits = model(x, t)
     
-    assert logits.shape == (2, vocab_size, 1024)
+    assert logits.shape == (2, vocab_size - 1, 1024)
     assert not torch.isnan(logits).any()
 
 def test_diffusion_scheduler():

@@ -4,21 +4,21 @@ BETA_START: 0.0001
 BETA_END: 0.02
 VOCAB_SIZE: 6                # A=0, C=1, G=2, T=3, N=4, [MASK]=5
 SEQ_LEN: 1024
-MIN_CORRUPTION_RATE: 0.0     # Floor for token masking during diffusion
+MIN_CORRUPTION_RATE: 0.0     # Floor for token masking during diffusion (set to 0 to align with GVES evaluation)
 
 # Model Architecture
 HIDDEN_DIM: 256
 
 # Training Hyperparameters
 BATCH_SIZE: 64
-EPOCHS: 50
+EPOCHS: 5                    # Running fewer epochs for quick validation (can be increased for full training)
 LEARNING_RATE: 0.001         # Base learning rate
 GRAD_CLIP: 1.0
-WARMUP_EPOCHS: 2             # Linear warmup duration (was 5 — too long)
+WARMUP_EPOCHS: 1             # Warmup duration
 T_0: 25                      # CosineAnnealingWarmRestarts restart cycle
 ETA_MIN: 0.000001            # Floor for Cosine learning rate
 
 # Paths & Directories
 DATA_DIR: "data/processed"
-CHECKPOINT_DIR: "outputs/checkpoints"
+CHECKPOINT_DIR: "outputs/checkpoints_clean"
 SEED: 42

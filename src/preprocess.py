@@ -51,7 +51,7 @@ def extract_gzip(src_path: str, dest_path: str, logger):
             shutil.copyfileobj(f_in, f_out)
     logger.info("Extraction complete.")
 
-def generate_dummy_data(dest_dir: str, num_healthy: int = 2000, num_variant: int = 1000, seq_len: int = 1024, seed: int = 42):
+def generate_dummy_data(dest_dir: str, num_healthy: int = 20000, num_variant: int = 1000, seq_len: int = 1024, seed: int = 42):
     """Generate high-quality synthetic genomic datasets for fast dry-runs and pipeline verification."""
     np.random.seed(seed)
     setup_dirs(dest_dir)
@@ -81,10 +81,6 @@ def generate_dummy_data(dest_dir: str, num_healthy: int = 2000, num_variant: int
     # We also save the original healthy reference windows for GVES calculation
     np.save(os.path.join(dest_dir, "X_healthy_ref.npy"), X_eval_ref)
     np.save(os.path.join(dest_dir, "Y_labels.npy"), Y_labels)
-    
-    # Overwrite X_healthy with a combined set of variant healthy reference sequences for simplicity in evaluation
-    # (So evaluate.py has matching shapes between healthy, corrupted, and labels)
-    np.save(os.path.join(dest_dir, "X_healthy.npy"), X_eval_ref)
 
 def preprocess_pipeline(config_path: str, dummy: bool = False):
     config = load_config(config_path)
@@ -148,9 +144,9 @@ def preprocess_pipeline(config_path: str, dummy: bool = False):
         generate_dummy_data(data_dir, seed=config.get("SEED", 42))
         return
 
-    # Parse ClinVar SNPs
-    logger.info("Parsing ClinVar SNPs...")
-    allowed_chroms = [str(i) for i in range(1, 23)] + ["X", "Y"]
+    # Parse ClinVar SNPs ONLY on testing chromosomes (chr21, chr22, chrX, chrY)
+    logger.info("Parsing ClinVar SNPs on test chromosomes...")
+    allowed_chroms = ["21", "22", "X", "Y"]
     rows = []
     
     with open(clinvar_vcf, "r") as f:
@@ -231,11 +227,81 @@ def preprocess_pipeline(config_path: str, dummy: bool = False):
     X_eval_alt = np.asarray(alt_windows, dtype=np.int8)
     Y_labels = np.asarray(labels, dtype=np.int8)
     
+    # Generate non-leaking pre-training data from hg38
+    logger.info("Generating non-leaking pre-training data from hg38...")
+    num_pretrain = 20000
+    pretrain_seqs = []
+    
+    # Build a set of ClinVar variant positions to ensure disjointness
+    clinvar_positions = {}
+    for row in df.itertuples(index=False):
+        chrom = row.chrom
+        pos = int(row.pos)
+        if chrom not in clinvar_positions:
+            clinvar_positions[chrom] = set()
+        clinvar_positions[chrom].add(pos)
+        
+    # Convert to sorted lists for fast binary search
+    import bisect
+    clinvar_sorted = {chrom: sorted(list(positions)) for chrom, positions in clinvar_positions.items()}
+    
+    def has_overlap(chrom, start_pos, end_pos):
+        if chrom not in clinvar_sorted:
+            return False
+        lst = clinvar_sorted[chrom]
+        idx = bisect.bisect_left(lst, start_pos)
+        if idx < len(lst) and lst[idx] <= end_pos:
+            return True
+        return False
+        
+    # Sample pre-training windows ONLY from training chromosomes (chr1-chr18) to prevent leakage
+    train_chroms = [f"chr{i}" for i in range(1, 19)]
+    chroms = [k for k in genome.keys() if k in train_chroms]
+    if len(chroms) == 0:
+        chroms = list(genome.keys())
+        
+    np.random.seed(config.get("SEED", 42))
+    
+    pbar = tqdm(total=num_pretrain, desc="Sampling pre-training windows")
+    attempts = 0
+    max_attempts = num_pretrain * 10
+    
+    while len(pretrain_seqs) < num_pretrain and attempts < max_attempts:
+        attempts += 1
+        chrom = np.random.choice(chroms)
+        chrom_len = len(genome[chrom])
+        if chrom_len <= WINDOW_SIZE:
+            continue
+            
+        # Sample starting position (0-indexed)
+        start = np.random.randint(0, chrom_len - WINDOW_SIZE)
+        end = start + WINDOW_SIZE
+        
+        # Check overlap: 1-based genomic range is [start + 1, end]
+        if has_overlap(chrom, start + 1, end):
+            continue
+            
+        seq = genome[chrom][start:end]
+        if len(seq) != WINDOW_SIZE:
+            continue
+            
+        ref_tokens = seq_to_tokens(seq)
+        if (ref_tokens == 4).mean() > MAX_N_FRAC:
+            continue
+            
+        pretrain_seqs.append(ref_tokens)
+        pbar.update(1)
+        
+    pbar.close()
+    
+    X_healthy = np.asarray(pretrain_seqs, dtype=np.int8)
+    
     # Save dataset arrays
-    np.save(os.path.join(data_dir, "X_healthy.npy"), X_eval_ref)
+    np.save(os.path.join(data_dir, "X_healthy.npy"), X_healthy)
+    np.save(os.path.join(data_dir, "X_healthy_ref.npy"), X_eval_ref)
     np.save(os.path.join(data_dir, "X_corrupted.npy"), X_eval_alt)
     np.save(os.path.join(data_dir, "Y_labels.npy"), Y_labels)
-    logger.info(f"Datasets generated successfully! Saved to {data_dir}.")
+    logger.info(f"Datasets generated successfully! Saved {len(X_healthy)} pre-training windows and {len(X_eval_ref)} ClinVar test windows to {data_dir}.")
 
 if __name__ == "__main__":
     import sys

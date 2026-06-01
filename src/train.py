@@ -18,6 +18,11 @@ def linear_warmup(step, warmup_steps, base_lr):
     """Scale LR linearly from 0 -> base_lr over warmup_steps."""
     return base_lr * min(1.0, step / max(warmup_steps, 1))
 
+def reverse_complement_logits(logits: torch.Tensor) -> torch.Tensor:
+    comp_map = [3, 2, 1, 0, 4]
+    reversed_logits = torch.flip(logits, dims=[-1])
+    return reversed_logits[:, comp_map, :]
+
 def train_model(config_path: str):
     # 1. Load config and setup utils
     config = load_config(config_path)
@@ -115,20 +120,28 @@ def train_model(config_path: str):
             
             # Run model with autocast
             with torch.amp.autocast("cuda", enabled=use_amp):
-                predicted_logits = model(x_noisy, t) # [B, 6, L]
+                predicted_logits = model(x_noisy, t)
                 
-                # Selective Masked Cross-Entropy Loss
+                # Masked cross entropy loss (vocabulary size is vocab_size - 1 = 5)
                 mask_flat = mutate_mask.view(-1)
-                logits_flat = predicted_logits.permute(0, 2, 1).reshape(-1, vocab_size)
+                logits_flat = predicted_logits.permute(0, 2, 1).reshape(-1, vocab_size - 1)
                 labels_flat = x_start.view(-1)
                 
                 logits_masked = logits_flat[mask_flat]
                 labels_masked = labels_flat[mask_flat]
                 
                 if mask_flat.sum() > 0:
-                    loss = F.cross_entropy(logits_masked, labels_masked)
+                    loss_ce = F.cross_entropy(logits_masked, labels_masked)
                 else:
-                    loss = F.cross_entropy(logits_flat, labels_flat)
+                    loss_ce = F.cross_entropy(logits_flat, labels_flat)
+                
+                # Double-strand consistency loss
+                x_noisy_rc = reverse_complement_tensor(x_noisy)
+                predicted_logits_rc = model(x_noisy_rc, t)
+                target_logits_rc = reverse_complement_logits(predicted_logits)
+                loss_dsc = F.mse_loss(predicted_logits_rc, target_logits_rc)
+                
+                loss = loss_ce + 0.1 * loss_dsc
             
             # Backpropagation using gradient scaling
             scaler.scale(loss).backward()
