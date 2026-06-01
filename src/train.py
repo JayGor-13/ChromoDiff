@@ -53,7 +53,11 @@ def train_model(config_path: str):
     # 3. Initialize model and scheduler
     vocab_size = config.get("VOCAB_SIZE", 6)
     hidden_dim = config.get("HIDDEN_DIM", 256)
-    model = GenoDiff1D(vocab_size=vocab_size, hidden_dim=hidden_dim).to(device)
+    model = GenoDiff1D(
+        vocab_size=vocab_size,
+        hidden_dim=hidden_dim,
+        attention_dropout=config.get("ATTENTION_DROPOUT", 0.1),
+    ).to(device)
     
     num_steps = config.get("T_STEPS", 1000)
     scheduler_diffusion = AbsorbingStateScheduler(
@@ -138,7 +142,7 @@ def train_model(config_path: str):
                 # Double-strand consistency loss
                 x_noisy_rc = reverse_complement_tensor(x_noisy)
                 predicted_logits_rc = model(x_noisy_rc, t)
-                target_logits_rc = reverse_complement_logits(predicted_logits)
+                target_logits_rc = reverse_complement_logits(predicted_logits).detach()
                 loss_dsc = F.mse_loss(predicted_logits_rc, target_logits_rc)
                 
                 loss = loss_ce + 0.1 * loss_dsc

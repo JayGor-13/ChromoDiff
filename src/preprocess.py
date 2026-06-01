@@ -17,6 +17,22 @@ BYTE_LUT = np.full(256, 4, dtype=np.int8)
 for base, idx in NUC_TO_IDX.items():
     BYTE_LUT[ord(base)] = idx
 
+CODING_CONSEQUENCES = (
+    "missense_variant",
+    "nonsense",
+    "frameshift_variant",
+    "stop_gained",
+    "stop_lost",
+    "start_lost",
+    "synonymous_variant",
+    "coding_sequence_variant",
+    "protein_altering_variant",
+    "inframe_insertion",
+    "inframe_deletion",
+    "splice_acceptor_variant",
+    "splice_donor_variant",
+)
+
 def seq_to_tokens(seq: str) -> np.ndarray:
     arr = np.frombuffer(seq.encode("ascii"), dtype=np.uint8)
     return BYTE_LUT[arr]
@@ -168,6 +184,14 @@ def preprocess_pipeline(config_path: str, dummy: bool = False):
                 continue
             if ref not in NUC_TO_IDX or alt not in NUC_TO_IDX:
                 continue
+
+            mc_field = ""
+            for field in info.split(";"):
+                if field.startswith("MC="):
+                    mc_field = field
+                    break
+            if any(consequence in mc_field for consequence in CODING_CONSEQUENCES):
+                continue
                 
             if "CLNSIG=Pathogenic" in info or "CLNSIG=Likely_pathogenic" in info:
                 label = 1
@@ -179,7 +203,7 @@ def preprocess_pipeline(config_path: str, dummy: bool = False):
             rows.append((f"chr{chrom}", pos, ref, alt, label))
             
     df = pd.DataFrame(rows, columns=["chrom", "pos", "ref", "alt", "label"])
-    logger.info(f"Found {len(df)} eligible SNPs.")
+    logger.info(f"Found {len(df)} eligible non-coding SNPs.")
     
     # Extracted window processing
     WINDOW_SIZE = 1024
@@ -229,71 +253,44 @@ def preprocess_pipeline(config_path: str, dummy: bool = False):
     
     # Generate non-leaking pre-training data from hg38
     logger.info("Generating non-leaking pre-training data from hg38...")
-    num_pretrain = 20000
+    num_pretrain = int(config.get("NUM_PRETRAIN_WINDOWS", 200000))
     pretrain_seqs = []
-    
-    # Build a set of ClinVar variant positions to ensure disjointness
-    clinvar_positions = {}
-    for row in df.itertuples(index=False):
-        chrom = row.chrom
-        pos = int(row.pos)
-        if chrom not in clinvar_positions:
-            clinvar_positions[chrom] = set()
-        clinvar_positions[chrom].add(pos)
-        
-    # Convert to sorted lists for fast binary search
-    import bisect
-    clinvar_sorted = {chrom: sorted(list(positions)) for chrom, positions in clinvar_positions.items()}
-    
-    def has_overlap(chrom, start_pos, end_pos):
-        if chrom not in clinvar_sorted:
-            return False
-        lst = clinvar_sorted[chrom]
-        idx = bisect.bisect_left(lst, start_pos)
-        if idx < len(lst) and lst[idx] <= end_pos:
-            return True
-        return False
-        
-    # Sample pre-training windows ONLY from training chromosomes (chr1-chr18) to prevent leakage
+
+    # Sample pre-training windows ONLY from training chromosomes (chr1-chr18) to prevent leakage.
     train_chroms = [f"chr{i}" for i in range(1, 19)]
     chroms = [k for k in genome.keys() if k in train_chroms]
     if len(chroms) == 0:
         chroms = list(genome.keys())
-        
+
     np.random.seed(config.get("SEED", 42))
-    
+
     pbar = tqdm(total=num_pretrain, desc="Sampling pre-training windows")
     attempts = 0
     max_attempts = num_pretrain * 10
-    
+
     while len(pretrain_seqs) < num_pretrain and attempts < max_attempts:
         attempts += 1
         chrom = np.random.choice(chroms)
         chrom_len = len(genome[chrom])
         if chrom_len <= WINDOW_SIZE:
             continue
-            
-        # Sample starting position (0-indexed)
+
         start = np.random.randint(0, chrom_len - WINDOW_SIZE)
         end = start + WINDOW_SIZE
-        
-        # Check overlap: 1-based genomic range is [start + 1, end]
-        if has_overlap(chrom, start + 1, end):
-            continue
-            
+
         seq = genome[chrom][start:end]
         if len(seq) != WINDOW_SIZE:
             continue
-            
+
         ref_tokens = seq_to_tokens(seq)
         if (ref_tokens == 4).mean() > MAX_N_FRAC:
             continue
-            
+
         pretrain_seqs.append(ref_tokens)
         pbar.update(1)
-        
+
     pbar.close()
-    
+
     X_healthy = np.asarray(pretrain_seqs, dtype=np.int8)
     
     # Save dataset arrays

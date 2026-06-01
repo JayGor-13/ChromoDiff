@@ -3,7 +3,7 @@ import torch
 import numpy as np
 
 from src.models.embedding import SinusoidalPositionEmbeddings
-from src.models.unet import DilatedResidualBlock, GenoDiff1D
+from src.models.unet import DilatedResidualBlock, GenoDiff1D, RoPESelfAttention
 from src.diffusion import AbsorbingStateScheduler
 from src.dataset import GenomicDataset, reverse_complement_tokens, reverse_complement_tensor
 
@@ -22,12 +22,21 @@ def test_dilated_block():
     dilation = 4
     block = DilatedResidualBlock(hidden_dim, dilation)
     
-    x = torch.randn(4, hidden_dim, 1024)
+    x = torch.randn(4, hidden_dim, 128)
     t_emb = torch.randn(4, hidden_dim)
     
     out = block(x, t_emb)
     
-    assert out.shape == (4, hidden_dim, 1024)
+    assert out.shape == (4, hidden_dim, 128)
+    assert not torch.isnan(out).any()
+
+def test_rope_attention():
+    hidden_dim = 64
+    attn = RoPESelfAttention(hidden_dim, num_heads=4, dropout=0.1)
+    x = torch.randn(2, hidden_dim, 128)
+    out = attn(x)
+
+    assert out.shape == (2, hidden_dim, 128)
     assert not torch.isnan(out).any()
 
 def test_genodiff_model():
@@ -35,12 +44,13 @@ def test_genodiff_model():
     hidden_dim = 256
     model = GenoDiff1D(vocab_size=vocab_size, hidden_dim=hidden_dim)
     
-    x = torch.randint(0, vocab_size, (2, 1024), dtype=torch.long)
+    seq_len = 128
+    x = torch.randint(0, vocab_size, (2, seq_len), dtype=torch.long)
     t = torch.randint(0, 1000, (2,), dtype=torch.long)
     
     logits = model(x, t)
     
-    assert logits.shape == (2, vocab_size - 1, 1024)
+    assert logits.shape == (2, vocab_size - 1, seq_len)
     assert not torch.isnan(logits).any()
 
 def test_diffusion_scheduler():

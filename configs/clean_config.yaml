@@ -8,6 +8,7 @@ MIN_CORRUPTION_RATE: 0.0     # Floor for token masking during diffusion (set to 
 
 # Model Architecture
 HIDDEN_DIM: 256
+ATTENTION_DROPOUT: 0.1
 
 # Training Hyperparameters
 BATCH_SIZE: 64
@@ -17,6 +18,8 @@ GRAD_CLIP: 1.0
 WARMUP_EPOCHS: 1             # Warmup duration
 T_0: 25                      # CosineAnnealingWarmRestarts restart cycle
 ETA_MIN: 0.000001            # Floor for Cosine learning rate
+NUM_PRETRAIN_WINDOWS: 200000 # Larger genome coverage for pre-training
+GVES_TIMESTEP: 5             # Calibrated low-noise timestep for variant scoring
 
 # Paths & Directories
 DATA_DIR: "data/processed"

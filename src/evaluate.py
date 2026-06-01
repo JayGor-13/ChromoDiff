@@ -16,7 +16,7 @@ def reverse_complement_logits(logits: torch.Tensor) -> torch.Tensor:
     return reversed_logits[:, comp_map, :]
 
 
-def calculate_gves(model, seq_corrupted, ref_base, alt_base, mutation_pos=512):
+def calculate_gves(model, seq_corrupted, ref_base, alt_base, mutation_pos=512, gves_timestep=5):
     """
     Calculate GVES score for a single variant centered at mutation_pos.
     GVES = log(P_ref) - log(P_alt) using log_softmax for numerical stability.
@@ -38,7 +38,7 @@ def calculate_gves(model, seq_corrupted, ref_base, alt_base, mutation_pos=512):
     seq_masked = seq_corrupted.clone()
     seq_masked[:, mutation_pos] = 5
     
-    t_tensor = torch.zeros(B, device=device, dtype=torch.long)
+    t_tensor = torch.full((B,), gves_timestep, device=device, dtype=torch.long)
     
     with torch.no_grad():
         with torch.amp.autocast("cuda", enabled=torch.cuda.is_available()):
@@ -58,7 +58,7 @@ def calculate_gves(model, seq_corrupted, ref_base, alt_base, mutation_pos=512):
         
     return gves.cpu().numpy()
 
-def score_dataset_gves(model, X_healthy, X_corrupted, mutation_pos=512, batch_size=64):
+def score_dataset_gves(model, X_healthy, X_corrupted, mutation_pos=512, batch_size=64, gves_timestep=5):
     """
     Score the dataset using the GVES score for each sequence.
     GVES = log(P_ref) - log(P_alt) using log_softmax for numerical stability.
@@ -80,7 +80,7 @@ def score_dataset_gves(model, X_healthy, X_corrupted, mutation_pos=512, batch_si
         batch_masked = batch_c.clone()
         batch_masked[:, mutation_pos] = 5
         
-        t_tensor = torch.zeros(B, device=device, dtype=torch.long)
+        t_tensor = torch.full((B,), gves_timestep, device=device, dtype=torch.long)
         
         with torch.no_grad():
             with torch.amp.autocast("cuda", enabled=torch.cuda.is_available()):
@@ -270,7 +270,11 @@ def run_evaluation(config_path: str, weights_path: str):
     # 2. Instantiate and load model
     vocab_size = config.get("VOCAB_SIZE", 6)
     hidden_dim = config.get("HIDDEN_DIM", 256)
-    model = GenoDiff1D(vocab_size=vocab_size, hidden_dim=hidden_dim).to(device)
+    model = GenoDiff1D(
+        vocab_size=vocab_size,
+        hidden_dim=hidden_dim,
+        attention_dropout=config.get("ATTENTION_DROPOUT", 0.1),
+    ).to(device)
     
     logger.info(f"Loading pretrained weights from {weights_path}...")
     state_dict = torch.load(weights_path, map_location=device)
@@ -287,7 +291,8 @@ def run_evaluation(config_path: str, weights_path: str):
         X_healthy=X_healthy,
         X_corrupted=X_corrupted,
         mutation_pos=512,
-        batch_size=config.get("BATCH_SIZE", 64)
+        batch_size=config.get("BATCH_SIZE", 64),
+        gves_timestep=config.get("GVES_TIMESTEP", 5),
     )
     
     # 4. Apply GC-content normalization
@@ -452,7 +457,11 @@ def evaluate_traitgym(config_path: str, weights_path: str, dataset_name: str = "
     # 2. Instantiate and load model
     vocab_size = config.get("VOCAB_SIZE", 6)
     hidden_dim = config.get("HIDDEN_DIM", 256)
-    model = GenoDiff1D(vocab_size=vocab_size, hidden_dim=hidden_dim).to(device)
+    model = GenoDiff1D(
+        vocab_size=vocab_size,
+        hidden_dim=hidden_dim,
+        attention_dropout=config.get("ATTENTION_DROPOUT", 0.1),
+    ).to(device)
     
     logger.info(f"Loading pretrained weights from {weights_path}...")
     state_dict = torch.load(weights_path, map_location=device)
@@ -468,7 +477,8 @@ def evaluate_traitgym(config_path: str, weights_path: str, dataset_name: str = "
         X_healthy=X_healthy,
         X_corrupted=X_corrupted,
         mutation_pos=MUT_POS,
-        batch_size=config.get("BATCH_SIZE", 64)
+        batch_size=config.get("BATCH_SIZE", 64),
+        gves_timestep=config.get("GVES_TIMESTEP", 5),
     )
     
     # 4. Apply GC-content normalization
@@ -508,4 +518,3 @@ if __name__ == "__main__":
     config_file = sys.argv[1] if len(sys.argv) > 1 else "configs/base_config.yaml"
     weights_file = sys.argv[2] if len(sys.argv) > 2 else "outputs/checkpoints/genodiff_best.pth"
     run_evaluation(config_file, weights_file)
-
